@@ -2,6 +2,8 @@ import numpy as np
 import plotly.graph_objects as go
 import json
 from pythermalcomfort import psychrometrics as psy
+from pythermalcomfort.models import pmv_ppd
+from pythermalcomfort.utilities import v_relative, clo_dynamic
 from math import ceil, floor
 import dash_bootstrap_components as dbc
 from copy import deepcopy
@@ -49,6 +51,7 @@ psy_dropdown_names.pop("Elevation", None)
 psy_dropdown_names.pop("Azimuth", None)
 psy_dropdown_names.pop("Saturation pressure", None)
 
+DATAFRAME = None
 
 def inputs():
     """"""
@@ -225,6 +228,156 @@ def layout_psy_chart():
         ),
     )
 
+def calculate_temp(season):
+    # Define constants for the environment
+    v = 0.1   # Air velocity in m/s
+    met = 1.0 # Metabolic rate (light activity)
+    if season == "winter":
+        clo = 1.0 # Clothing insulation (light clothing)
+    else:
+        clo = 0.5
+    
+    temp_range = np.arange(0,40,0.1)
+
+    min_comfort_temp_0 = None
+    max_comfort_temp_0 = None
+    min_comfort_temp_100 = None
+    max_comfort_temp_100 = None
+
+    v_r = v_relative(v = v, met = met)
+
+    clo_d = clo_dynamic(clo=clo, met=met)
+
+    for temp in temp_range:
+        # Calculate PMV using pythermalcomfort's pmv function
+        result_0 = pmv_ppd(tdb=temp, tr=temp, vr=v_r, rh=0, met=met, clo=clo_d, standard='ASHRAE')
+        result_100 = pmv_ppd(tdb=temp, tr=temp, vr=v_r, rh=100, met=met, clo=clo_d, standard='ASHRAE')
+
+        # Check if PMV is within the comfort range of -0.5 to +0.5
+        if result_0['ppd'] <= 10:
+            if min_comfort_temp_0 is None:
+                min_comfort_temp_0 = temp  # First comfortable temperature
+            max_comfort_temp_0 = temp  # Update max comfort temp as we go
+
+        # Check if PMV is within the comfort range of -0.5 to +0.5
+        if result_100['ppd'] <= 10:
+            if min_comfort_temp_100 is None:
+                min_comfort_temp_100 = temp  # First comfortable temperature
+            max_comfort_temp_100 = temp  # Update max comfort temp as we go
+    
+    if min_comfort_temp_0 is None or max_comfort_temp_0 is None:
+        raise ValueError(f"No comfort temperature found in the specified range for the given season {min_comfort_temp_0}, {max_comfort_temp_0}.")
+
+    if min_comfort_temp_100 is None or max_comfort_temp_100 is None:
+        raise ValueError(f"No comfort temperature found in the specified range for the given season {min_comfort_temp_100}, {max_comfort_temp_100}.")
+    
+    return min_comfort_temp_0, max_comfort_temp_0, min_comfort_temp_100, max_comfort_temp_100
+
+def calculate_comfort_humidity_range(season):
+    # Define constants for the environment
+    tdb = 25  # Dry bulb temperature in °C
+    tr = 25   # Radiant temperature in °C (assuming equal to dry bulb temperature)
+    v = 0.1   # Air velocity in m/s
+    met = 1.1 # Metabolic rate (light activity)
+    if season == "winter":
+        clo = 1.0 # Clothing insulation (light clothing)
+    else:
+        clo = 0.5
+
+    # Calculate relative air speed
+    v_r = v_relative(v=v, met=met)
+
+    # Calculate dynamic clothing insulation
+    clo_d = clo_dynamic(clo=clo, met=met)
+
+    # Initialize empty list to store results
+    humidity_range = []
+
+    # Iterate over a range of relative humidity values (e.g., 0 to 100%)
+    for rh in np.arange(0, 101, 1):
+        # Calculate PMV and PPD for each relative humidity
+        results = pmv_ppd(tdb=tdb, tr=tr, vr=v_r, rh=rh, met=met, clo=clo_d, standard='ASHRAE')
+        
+        # Check if PPD <= 10 (for 90% satisfaction)
+        if results['ppd'] <= 10:
+            humidity_range.append(rh)
+
+    # Print the comfortable relative humidity range
+    print("Comfortable relative humidity range (PPD <= 10%):")
+    print(f"{humidity_range[0]}% to {humidity_range[-1]}%")
+
+def calculate_comfort_temperature_range(season, air_velocity=0.1, rh=50, met=1.1):
+    """
+    Calculate the min and max comfort temperature based on PMV model for a given season.
+    
+    :param season: "winter" or "summer"
+    :param air_velocity: Air velocity (m/s), default 0.1 m/s for typical indoor conditions
+    :param rh: Relative humidity (%), default 50%
+    :param met: Metabolic rate (MET), default 1.2 MET for light activities
+    :param clo: Clothing insulation (CLO), default 0.5 CLO for light clothing
+    :return: Tuple (min_comfort_temp, max_comfort_temp)
+    """
+    print(season)
+    # Define a range of air temperatures based on the season
+    if season == "winter":
+        temp_range = np.arange(-10, 40, 0.1)  # Winter conditions (-10°C to 20°C)
+        clo = 1.0
+    elif season == "summer":
+        temp_range = np.arange(20, 40, 0.1)  # Summer conditions (20°C to 40°C)
+        clo = 0.5
+    else:
+        raise ValueError("Season must be 'winter' or 'summer'")
+
+    min_comfort_temp = None
+    max_comfort_temp = None
+
+    # Calculate relative air speed
+    v_r = v_relative(v=air_velocity, met=met)
+
+    # Calculate dynamic clothing insulation
+    clo_d = clo_dynamic(clo=clo, met=met)
+
+    # Calculate PMV for each temperature in the range
+    for temp in temp_range:
+        # Calculate PMV using pythermalcomfort's pmv function
+        result = pmv_ppd(tdb=temp, tr=temp, vr=v_r, rh=rh, met=met, clo=clo_d, standard='ASHRAE')
+        
+        print(f"{result} {temp}")
+        # Check if PMV is within the comfort range of -0.5 to +0.5
+        if result['ppd'] <= 10:
+            if min_comfort_temp is None:
+                min_comfort_temp = temp  # First comfortable temperature
+            max_comfort_temp = temp  # Update max comfort temp as we go
+    
+    if min_comfort_temp is None or max_comfort_temp is None:
+        raise ValueError(f"No comfort temperature found in the specified range for the given season {min_comfort_temp}, {max_comfort_temp}.")
+    
+    return min_comfort_temp, max_comfort_temp
+
+def calculate_comfort_percentage():
+    global DATAFRAME
+    print(DATAFRAME)
+    comf = 0
+    for index, data in DATAFRAME.iterrows():
+
+        # Calculate relative air speed
+        v_r = v_relative(v=0.1, met=1.1)
+        # Calculate dynamic clothing insulation
+        clo_d = clo_dynamic(clo=1.0, met=1.1)
+        result_w = pmv_ppd(tdb=data["DBT"],tr=data["MRT"],vr=v_r,rh=data["RH"],met=1.1,clo=clo_d,standard='ASHRAE')
+
+        # Calculate relative air speed
+        v_r = v_relative(v=0.1, met=1.1)
+        # Calculate dynamic clothing insulation
+        clo_d = clo_dynamic(clo=0.5, met=1.1)
+        result_s = pmv_ppd(tdb=data["DBT"],tr=data["MRT"],vr=v_r,rh=data["RH"],met=1.1,clo=clo_d,standard='ASHRAE')
+        #if (-0.2 <= result_w['pmv'] <= 0.2) or (-0.2 <= result_s['pmv'] <= 0.2):
+        if (result_w['ppd'] <= 10 or result_s['ppd'] <= 10):
+            print(f"tbd={data['DBT']},tr={data['MRT']},rh={data['RH']}")
+            print(f"Winter: {result_w}")
+            print(f"Summer: {result_s}")
+            comf+=1
+    print(f"Comfort hours: {comf}, Total hours: {DATAFRAME.shape[0]}, Comfort Percent: {(comf/DATAFRAME.shape[0])*100}%")
 
 # psychrometric chart
 @app.callback(
@@ -249,6 +402,7 @@ def layout_psy_chart():
         State("si-ip-unit-store", "data"),
     ],
 )
+
 def update_psych_chart(
     ts,
     colorby_var,
@@ -320,6 +474,38 @@ def update_psych_chart(
         data_min = round(df["hr"].min(), 4)
         var_range_y = [data_min * 1000, data_max * 1000]
 
+    global DATAFRAME
+
+    DATAFRAME = df
+
+    win_min_temp_0, win_max_temp_0, win_min_temp_100, win_max_temp_100 = calculate_temp("winter")
+    sum_min_temp_0, sum_max_temp_0, sum_min_temp_100, sum_max_temp_100 = calculate_temp("summer")
+
+    print(f"Winter Comfort Temperature Range RH (0 , 100): ({win_min_temp_0:.2f}°C to {win_max_temp_0:.2f}°C, {win_min_temp_100:.2f}°C to {win_max_temp_100:.2f}°C)")
+    print(f"Summer Comfort Temperature Range RH (0 , 100): ({sum_min_temp_0:.2f}°C to {sum_max_temp_0:.2f}°C, {sum_min_temp_100:.2f}°C to {sum_max_temp_100:.2f}°C)")
+
+    x_winter = [win_min_temp_0, win_min_temp_100, win_max_temp_100, win_max_temp_0, win_min_temp_0]
+    y_values = [0.1,16,16,0.5,0.5]
+
+    #calculate_comfort_percentage()
+    ''''
+    # Calculate comfort temperatures for winter and summer
+    winter_min_temp, winter_max_temp = calculate_comfort_temperature_range("winter")
+    summer_min_temp, summer_max_temp = calculate_comfort_temperature_range("summer")
+
+    print(f"Winter Comfort Temperature Range: {winter_min_temp:.2f}°C to {winter_max_temp:.2f}°C")
+    print(f"Summer Comfort Temperature Range: {summer_min_temp:.2f}°C to {summer_max_temp:.2f}°C")
+
+    # Calculate comfort temperatures for winter and summer
+    winter_min_rh, winter_max_rh = calculate_comfort_humidity_range("winter")
+    summer_min_rh, summer_max_rh = calculate_comfort_humidity_range("summer")
+
+    print(f"Winter Comfort Humidity Range: {winter_min_rh:.2f}°C to {winter_max_rh:.2f}°C")
+    print(f"Summer Comfort Humidity Range: {summer_min_rh:.2f}°C to {summer_max_rh:.2f}°C")
+    '''
+    #calculate_comfort_humidity_range("winter")
+    #calculate_comfort_humidity_range("summer")
+    
     title = "Psychrometric Chart"
 
     if colorby_var != "None" and colorby_var != "Frequency":
@@ -383,6 +569,18 @@ def update_psych_chart(
                 + ": %{x:.2f}"
                 + mapping_dictionary["DBT"]["name"],
                 name="",
+            )
+        )
+
+        # Add a line trace to the figure
+        fig.add_trace(
+            go.Scatter(
+                x=x_winter,  # x-axis values
+                y=y_values,  # y-axis values
+                showlegend=False,  # Hide legend
+                mode="lines",  # Only show lines
+                name="Quadratic Line",  # Legend name
+                line=dict(color="blue", width=2),  # Customize line style
             )
         )
     elif var == "Frequency":
