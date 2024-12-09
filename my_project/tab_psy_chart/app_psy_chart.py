@@ -352,15 +352,15 @@ def point_relative_to_line_two_points(coords, xp, yp):
     x2 = coords[1][0]
     y2 = coords[1][1]
     
-    print(f"Recieved coordinates: ({x1}, {y1}), ({x2}, {y2}). Comparing with ({xp}, {yp})")
+    #print(f"Recieved coordinates: ({x1}, {y1}), ({x2}, {y2}). Comparing with ({xp}, {yp})")
     # Calculate the determinant to determine if the point is above, below, or on the line
     det = (x2 - x1) * (yp - y1) - (y2 - y1) * (xp - x1)
     
     if det > 0:
-        print("Point is below the line")
+        #print("Point is below the line")
         return "below"
     elif det < 0:
-        print("Point is above the line")
+        #print("Point is above the line")
         return "above"
     else:
         return "On the line"
@@ -374,7 +374,9 @@ def add_comfort_hour(temp, rh, comfort_hour):
     # Convert Relative Humidity to Humidity Ratio
     h_ratio = calculate_humidity_ratio(temp, rh)
     i = 0
+    comfortable = False
     for polygon in design_polygons:
+        print(f"{i}")
         # If not null
         if not polygon is None:
             # If it is a Polygon
@@ -382,20 +384,43 @@ def add_comfort_hour(temp, rh, comfort_hour):
                 point = Point(temp, h_ratio)
                 # If point is inside polygon
                 if polygon.contains(point):
+                    print(f"CHecking if {i} == 13")
+                    if i >= 15 and comfortable:
+                        print(f"Breaked when reaching {i}")
+                        break
+                    print(f"Check completed since {i} != 13")
                     comfort_hour[i] += 1
+                    comfortable = True
+                    
             # If it is a line
             else:
                 # If comfortable hour is below the line
-                print(f"Line: {polygon[2]}")
+                #print(f"Line: {polygon[2]}")
                 if polygon[2] == "below":
                     if point_relative_to_line_two_points(polygon[0], temp, h_ratio) == "below":
-                        print(f"Point was supposed to be below for DESIGN: {i}")
+                        #print(f"Point was supposed to be below for DESIGN: {i}")
+                        print(f"CHecking if {i} == 13")
+                        if i >= 15 and comfortable:
+                            print(f"Breaked when reaching {i}")
+                            break
+                        print(f"Check completed since {i} != 13")
                         comfort_hour[i] += 1
+                        comfortable = True
+                        
+                    
                 # If comfortable hour is above the line
                 elif polygon[2] == "above":
                     if point_relative_to_line_two_points(polygon[0], temp, h_ratio) == "above":
-                        print(f"Point was supposed to be above for DESIGN: {i}")
+                        #print(f"Point was supposed to be above for DESIGN: {i}")
+                        print(f"CHecking if {i} == 13")
+                        if i >= 15 and comfortable:
+                            print(f"Breaked when reaching {i}")
+                            break
+                        print(f"Check completed since {i} != 13")
                         comfort_hour[i] += 1
+                        comfortable = True
+                        
+                    
         i += 1
     return comfort_hour
 
