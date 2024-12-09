@@ -134,11 +134,11 @@ mapping_dictionary = {
         "color": ["#00b3ff", "#000082", "#ff0000", "#ffff00"],
         "si": {
             "unit": "°C",
-            "range": [-40, 50],
+            "range": [-40, 40],
         },
         "ip": {
             "unit": "°F",
-            "range": [-40, 122],
+            "range": [-40, 104],
         },
         "conversion_function": "temperature",
     },
@@ -769,11 +769,11 @@ mapping_dictionary = {
         "color": ["#ffe600", "#00c8ff", "#0000ff"],
         "si": {
             "unit": "g water/kg dry air",
-            "range": [0, 0.03 * 1000],
+            "range": [0, 0.023 * 1000],
         },
         "ip": {
             "unit": "lb water/klb dry air",
-            "range": [0, 0.03 * 1000],
+            "range": [0, 0.023 * 1000],
         },
         "conversion_function": None,
     },

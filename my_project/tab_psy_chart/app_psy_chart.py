@@ -5,6 +5,7 @@ from pythermalcomfort import psychrometrics as psy
 from pythermalcomfort.models import pmv_ppd
 from pythermalcomfort.utilities import v_relative, clo_dynamic
 from math import ceil, floor
+from shapely.geometry import Point, Polygon
 import dash_bootstrap_components as dbc
 from copy import deepcopy
 from dash import dcc
@@ -228,6 +229,34 @@ def layout_psy_chart():
         ),
     )
 
+
+def float_range(start, stop, step):
+    while start < stop:
+        yield start
+        start += step
+
+def humidity_curve(min_temp, max_temp, step, rh):
+   x_result = []
+   y_result = []
+   for temp in float_range(min_temp, max_temp + step, step):
+       x_result.append(temp)
+       partial_vapor_pressure = (rh / 100) * psy.p_sat(temp)
+       atmospheric_pressure = 101325
+       humidity_ratio = 0.622 * (
+           partial_vapor_pressure / (atmospheric_pressure - partial_vapor_pressure)
+       )
+       y_result.append(humidity_ratio)
+   #print(f"Humidity ratio returned: {x_result}, {y_result}")
+   return x_result, y_result
+
+def calculate_humidity_ratio(temp, rh):
+    partial_vapor_pressure = (rh / 100) * psy.p_sat(temp)
+    atmospheric_pressure = 101325
+    humidity_ratio = 0.622 * (
+        partial_vapor_pressure / (atmospheric_pressure - partial_vapor_pressure)
+    )
+    return humidity_ratio
+
 def calculate_temp(season):
     # Define constants for the environment
     v = 0.1   # Air velocity in m/s
@@ -273,112 +302,163 @@ def calculate_temp(season):
     
     return min_comfort_temp_0, max_comfort_temp_0, min_comfort_temp_100, max_comfort_temp_100
 
-def calculate_comfort_humidity_range(season):
-    # Define constants for the environment
-    tdb = 25  # Dry bulb temperature in °C
-    tr = 25   # Radiant temperature in °C (assuming equal to dry bulb temperature)
-    v = 0.1   # Air velocity in m/s
-    met = 1.1 # Metabolic rate (light activity)
-    if season == "winter":
-        clo = 1.0 # Clothing insulation (light clothing)
+design_ranges = {
+    1.1: ([[25.8, 0.00004], [21.5, 0.00004], [19.5, 0.012], [24, 0.012]],"#0000ff", "in", "Comfort Winter"),
+    1.2: ([[28, 0.00004], [25, 0.00004], [23.5, 0.012], [26.6, 0.012]],"#0000ff", "in", "Comfort Summer"),
+    2: ([[25, 0], [22.75, 0.0175]],"#9c0acc", "none", "Sun Shading of Windows"), # Single RH 100%
+    3: ([[36.4, 0.00004], [28, 0.00004], [26.6, 0.012], [35, 0.012]],"#ffc267", "in", "High Thermal Mass"),
+    4: ([[40,0.00004], [28, 0.00004], [26.6, 0.012], [40, 0.012]],"#ffc267", "in", "High Thermal Mass Night Flushed"),
+    5: ([[40, 0], [28, 0.00004], [26.6, 0.012],[40, 0.0065]],"#0f0faf", "in", "Direct Evaporative Cooling"),
+    6: ([[40,0.00004], [28, 0.00004], [26.6, 0.012],[40, 0.0083]],"black", "in", "Two-Stage Evaporative Cooling"),
+    7: ([[31, 0.00004],[28, 0.00004],[26.6, 0.012],[29.5, 0.012]],"#0b6a0b", "in", "Natural Ventilation Cooling"),
+    8: ([[29.3, 0.00004],[28, 0.00004],[26.6, 0.012],[28, 0.012]],"#1fce1f", "in", "Fan-Forced Ventilation Cooling"),
+    9: ([[21.5, 0.00004],[12.8, 0.00004],[12.8, 0.0092],[19.2, 0.0139]],"#d36e26", "in", "Internal Heat Gain"), # RH 100%
+    10: ([],"#ff7fe5", "none", "Passive Solar Direct Gain Low Mass"),
+    11: ([],"#d327f6", "none", "Passive Solar Direct Gain High Mass"),
+    12: ([[9.1, 0], [9.1, -1]],"#82592f", "none", "Wind Protection of Outdoor Spaces"), # Single RH 100%
+    13: ([],"#1fd2d2", "none", "Humidification"),
+    14: ([[26.6, 0.012],[19.5, 0.012],[19.2, 0.0139],[25.6, 0.021]],"#1fd2d2", "in", "Dehumidification"), # RH 100%
+    15: ([[28, 0.00004],[25.6, 0.021]],"#fd0606", "above", "Cooling, add Dehumidification if needed"), # Single RH 100%
+    16: ([[21.5, 0.00004],[19.2, 0.013]],"#fd0606", "below", "Heating, add Humidification if needed") # Single RH 100%
+}
+
+design_ranges[2][0][1][1] = calculate_humidity_ratio(design_ranges[2][0][1][0], 100)
+design_ranges[12][0][1][1] = calculate_humidity_ratio(design_ranges[12][0][1][0], 100)
+design_ranges[15][0][1][1] = calculate_humidity_ratio(design_ranges[15][0][1][0], 100)
+design_ranges[16][0][1][1] = calculate_humidity_ratio(design_ranges[16][0][1][0], 100)
+
+print(design_ranges[15][0])
+
+def create_polygons():
+    polygons = []
+    for design_num in design_ranges:
+        if design_ranges[design_num][0]:
+            # Length of 4
+            if len(design_ranges[design_num][0]) == 4:
+                polygons.append(Polygon([(design_ranges[design_num][0][0][0], design_ranges[design_num][0][0][1]),(design_ranges[design_num][0][1][0], design_ranges[design_num][0][1][1]),(design_ranges[design_num][0][2][0], design_ranges[design_num][0][2][1]),(design_ranges[design_num][0][3][0], design_ranges[design_num][0][3][1])]))
+            # Length of 2
+            else:
+                polygons.append(design_ranges[design_num])
+        # Lenght of 0
+        else:
+            polygons.append(None)
+    print(f"Polygons: {polygons}")
+    return polygons
+    
+
+def point_relative_to_line_two_points(coords, xp, yp):
+    x1 = coords[0][0]
+    y1 = coords[0][1]
+    x2 = coords[1][0]
+    y2 = coords[1][1]
+    
+    print(f"Recieved coordinates: ({x1}, {y1}), ({x2}, {y2}). Comparing with ({xp}, {yp})")
+    # Calculate the determinant to determine if the point is above, below, or on the line
+    det = (x2 - x1) * (yp - y1) - (y2 - y1) * (xp - x1)
+    
+    if det > 0:
+        print("Point is below the line")
+        return "below"
+    elif det < 0:
+        print("Point is above the line")
+        return "above"
     else:
-        clo = 0.5
+        return "On the line"
 
-    # Calculate relative air speed
-    v_r = v_relative(v=v, met=met)
+global design_polygons
 
-    # Calculate dynamic clothing insulation
-    clo_d = clo_dynamic(clo=clo, met=met)
+design_polygons = create_polygons()
 
-    # Initialize empty list to store results
-    humidity_range = []
+def add_comfort_hour(temp, rh, comfort_hour):
+    global design_polygons
+    # Convert Relative Humidity to Humidity Ratio
+    h_ratio = calculate_humidity_ratio(temp, rh)
+    i = 0
+    for polygon in design_polygons:
+        # If not null
+        if not polygon is None:
+            # If it is a Polygon
+            if isinstance(polygon, Polygon):
+                point = Point(temp, h_ratio)
+                # If point is inside polygon
+                if polygon.contains(point):
+                    comfort_hour[i] += 1
+            # If it is a line
+            else:
+                # If comfortable hour is below the line
+                print(f"Line: {polygon[2]}")
+                if polygon[2] == "below":
+                    if point_relative_to_line_two_points(polygon[0], temp, h_ratio) == "below":
+                        print(f"Point was supposed to be below for DESIGN: {i}")
+                        comfort_hour[i] += 1
+                # If comfortable hour is above the line
+                elif polygon[2] == "above":
+                    if point_relative_to_line_two_points(polygon[0], temp, h_ratio) == "above":
+                        print(f"Point was supposed to be above for DESIGN: {i}")
+                        comfort_hour[i] += 1
+        i += 1
+    return comfort_hour
 
-    # Iterate over a range of relative humidity values (e.g., 0 to 100%)
-    for rh in np.arange(0, 101, 1):
-        # Calculate PMV and PPD for each relative humidity
-        results = pmv_ppd(tdb=tdb, tr=tr, vr=v_r, rh=rh, met=met, clo=clo_d, standard='ASHRAE')
-        
-        # Check if PPD <= 10 (for 90% satisfaction)
-        if results['ppd'] <= 10:
-            humidity_range.append(rh)
+def print_comfort_percentage(comfort_hours, max_hour):
+    global design_ranges
+    design_ranges_list = list(design_ranges.items())
 
-    # Print the comfortable relative humidity range
-    print("Comfortable relative humidity range (PPD <= 10%):")
-    print(f"{humidity_range[0]}% to {humidity_range[-1]}%")
-
-def calculate_comfort_temperature_range(season, air_velocity=0.1, rh=50, met=1.1):
-    """
-    Calculate the min and max comfort temperature based on PMV model for a given season.
-    
-    :param season: "winter" or "summer"
-    :param air_velocity: Air velocity (m/s), default 0.1 m/s for typical indoor conditions
-    :param rh: Relative humidity (%), default 50%
-    :param met: Metabolic rate (MET), default 1.2 MET for light activities
-    :param clo: Clothing insulation (CLO), default 0.5 CLO for light clothing
-    :return: Tuple (min_comfort_temp, max_comfort_temp)
-    """
-    print(season)
-    # Define a range of air temperatures based on the season
-    if season == "winter":
-        temp_range = np.arange(-10, 40, 0.1)  # Winter conditions (-10°C to 20°C)
-        clo = 1.0
-    elif season == "summer":
-        temp_range = np.arange(20, 40, 0.1)  # Summer conditions (20°C to 40°C)
-        clo = 0.5
-    else:
-        raise ValueError("Season must be 'winter' or 'summer'")
-
-    min_comfort_temp = None
-    max_comfort_temp = None
-
-    # Calculate relative air speed
-    v_r = v_relative(v=air_velocity, met=met)
-
-    # Calculate dynamic clothing insulation
-    clo_d = clo_dynamic(clo=clo, met=met)
-
-    # Calculate PMV for each temperature in the range
-    for temp in temp_range:
-        # Calculate PMV using pythermalcomfort's pmv function
-        result = pmv_ppd(tdb=temp, tr=temp, vr=v_r, rh=rh, met=met, clo=clo_d, standard='ASHRAE')
-        
-        print(f"{result} {temp}")
-        # Check if PMV is within the comfort range of -0.5 to +0.5
-        if result['ppd'] <= 10:
-            if min_comfort_temp is None:
-                min_comfort_temp = temp  # First comfortable temperature
-            max_comfort_temp = temp  # Update max comfort temp as we go
-    
-    if min_comfort_temp is None or max_comfort_temp is None:
-        raise ValueError(f"No comfort temperature found in the specified range for the given season {min_comfort_temp}, {max_comfort_temp}.")
-    
-    return min_comfort_temp, max_comfort_temp
+    print(f"These are the comfort hour percentage for each design strategy (out of {max_hour}hr):")
+    i = 0
+    for comfort_hour in comfort_hours:
+        print(f"{round((comfort_hour / max_hour) * 100, 2)}% {i} {design_ranges_list[i][1][3]} {comfort_hour}hr, ")
+        i += 1
 
 def calculate_comfort_percentage():
     global DATAFRAME
-    print(DATAFRAME)
-    comf = 0
+    #print(DATAFRAME)
+    comfort_hour = [0 for i in range(17)]
     for index, data in DATAFRAME.iterrows():
+        temp = data["DBT"]
+        rh = data["RH"]
+        comfort_hour = add_comfort_hour(temp, rh, comfort_hour)
+    print_comfort_percentage(comfort_hour, len(DATAFRAME))
 
-        # Calculate relative air speed
-        v_r = v_relative(v=0.1, met=1.1)
-        # Calculate dynamic clothing insulation
-        clo_d = clo_dynamic(clo=1.0, met=1.1)
-        result_w = pmv_ppd(tdb=data["DBT"],tr=data["MRT"],vr=v_r,rh=data["RH"],met=1.1,clo=clo_d,standard='ASHRAE')
+def add_humidity_curve(design_num):
+    X_100, y_100 = humidity_curve(design_ranges[design_num][0][2][0], design_ranges[design_num][0][3][0], 0.1, 100)
 
-        # Calculate relative air speed
-        v_r = v_relative(v=0.1, met=1.1)
-        # Calculate dynamic clothing insulation
-        clo_d = clo_dynamic(clo=0.5, met=1.1)
-        result_s = pmv_ppd(tdb=data["DBT"],tr=data["MRT"],vr=v_r,rh=data["RH"],met=1.1,clo=clo_d,standard='ASHRAE')
-        #if (-0.2 <= result_w['pmv'] <= 0.2) or (-0.2 <= result_s['pmv'] <= 0.2):
-        if (result_w['ppd'] <= 10 or result_s['ppd'] <= 10):
-            print(f"tbd={data['DBT']},tr={data['MRT']},rh={data['RH']}")
-            print(f"Winter: {result_w}")
-            print(f"Summer: {result_s}")
-            comf+=1
-    print(f"Comfort hours: {comf}, Total hours: {DATAFRAME.shape[0]}, Comfort Percent: {(comf/DATAFRAME.shape[0])*100}%")
+    arr = [[xi, yi] for xi, yi in zip(X_100, y_100)]
 
+    #print(f"Here: {arr}")
+
+    design_ranges[design_num][0].pop(2)
+    design_ranges[design_num][0].pop(2)
+    for value in arr:
+        design_ranges[design_num][0].append(value)
+
+    #print(f"Final: {design_ranges[design_num][0]}")
+
+add_humidity_curve(9)
+add_humidity_curve(14)
+
+def cycle_range():
+    for design_num in design_ranges:
+        # Check if not null
+        if design_ranges[design_num][0]:
+            design_ranges[design_num][0].append(design_ranges[design_num][0][0])
+
+cycle_range()
+
+#print(f"Cycle: {design_ranges[1.1][0]}")
+
+def split_data(combined):
+    X, y = zip(*combined)
+    X = list(X)
+    y = list(y)
+    return X, y
+
+def celsius_to_fahrenheit(celsius_arr):
+    fahrenheit_arr = []
+    for celsius in celsius_arr:
+        fahrenheit_arr.append((celsius * 9/5) + 32)
+    return fahrenheit_arr
+
+display_order = [16, 15, 9, 14, 13, 12, 11, 10, 8, 7, 6, 5, 4, 3, 2, 1.2, 1.1]
 # psychrometric chart
 @app.callback(
     Output("psych-chart", "children"),
@@ -473,22 +553,36 @@ def update_psych_chart(
         data_max = round(df["hr"].max(), 4)
         data_min = round(df["hr"].min(), 4)
         var_range_y = [data_min * 1000, data_max * 1000]
-
+   
     global DATAFRAME
 
     DATAFRAME = df
-
+    ''''
     win_min_temp_0, win_max_temp_0, win_min_temp_100, win_max_temp_100 = calculate_temp("winter")
     sum_min_temp_0, sum_max_temp_0, sum_min_temp_100, sum_max_temp_100 = calculate_temp("summer")
 
     print(f"Winter Comfort Temperature Range RH (0 , 100): ({win_min_temp_0:.2f}°C to {win_max_temp_0:.2f}°C, {win_min_temp_100:.2f}°C to {win_max_temp_100:.2f}°C)")
     print(f"Summer Comfort Temperature Range RH (0 , 100): ({sum_min_temp_0:.2f}°C to {sum_max_temp_0:.2f}°C, {sum_min_temp_100:.2f}°C to {sum_max_temp_100:.2f}°C)")
 
-    x_winter = [win_min_temp_0, win_min_temp_100, win_max_temp_100, win_max_temp_0, win_min_temp_0]
-    y_values = [0.1,16,16,0.5,0.5]
+    x_top, y_top = humidity_curve(win_min_temp_100, win_max_temp_100, 1, 100)
+    x_winter = [
+        win_min_temp_0,
+        *x_top,
+        win_max_temp_0,
+        win_min_temp_0,
+    ]
+    y_winter = [0.4, *y_top, 0.4, 0.4]
 
-    #calculate_comfort_percentage()
-    ''''
+    x_top, y_top = humidity_curve(sum_min_temp_100, sum_max_temp_100, 1, 100)
+    x_summer = [
+        sum_min_temp_0,
+        *x_top,
+        sum_max_temp_0,
+        sum_min_temp_0,
+    ]
+    y_summer = [0.4, *y_top, 0.4, 0.4]
+    calculate_comfort_percentage()
+    
     # Calculate comfort temperatures for winter and summer
     winter_min_temp, winter_max_temp = calculate_comfort_temperature_range("winter")
     summer_min_temp, summer_max_temp = calculate_comfort_temperature_range("summer")
@@ -506,6 +600,10 @@ def update_psych_chart(
     #calculate_comfort_humidity_range("winter")
     #calculate_comfort_humidity_range("summer")
     
+    calculate_comfort_percentage()
+    
+    global design_ranges
+
     title = "Psychrometric Chart"
 
     if colorby_var != "None" and colorby_var != "Frequency":
@@ -572,17 +670,48 @@ def update_psych_chart(
             )
         )
 
+        for order in display_order:
+            if design_ranges[order][0]:
+                X, y = split_data(design_ranges[order][0])
+                if si_ip == "ip":
+                    X = celsius_to_fahrenheit(X)
+                y = [value*1000 for value in y]
+                fig.add_trace(
+                    go.Scatter(
+                        x=X,  # x-axis values
+                        y=y,  # y-axis values
+                        showlegend=False,  # Hide legend
+                        mode="lines",  # Only show lines
+                        name="Quadratic Line",  # Legend name
+                        line=dict(color=design_ranges[order][1], width=2),  # Customize line style
+                    )
+                )
+                #print(f"X:{X}")
+                #print(f"y:{y}")
+        ''''
         # Add a line trace to the figure
         fig.add_trace(
             go.Scatter(
                 x=x_winter,  # x-axis values
-                y=y_values,  # y-axis values
+                y=y_winter,  # y-axis values
                 showlegend=False,  # Hide legend
                 mode="lines",  # Only show lines
                 name="Quadratic Line",  # Legend name
                 line=dict(color="blue", width=2),  # Customize line style
             )
         )
+
+        fig.add_trace(
+            go.Scatter(
+                x=x_summer,  # x-axis values
+                y=y_summer,  # y-axis values
+                showlegend=False,  # Hide legend
+                mode="lines",  # Only show lines
+                name="Quadratic Line",  # Legend name
+                line=dict(color="red", width=2),  # Customize line style
+            )
+        )
+        '''
     elif var == "Frequency":
         fig.add_trace(
             go.Histogram2d(
@@ -595,6 +724,43 @@ def update_psych_chart(
                 xbins=dict(start=-50, end=100, size=1),
             )
         )
+        for design_num in design_ranges:
+            if design_ranges[design_num][0]:
+                X, y = split_data(design_ranges[design_num][0])
+                fig.add_trace(
+                        go.Scatter(
+                            x=X,  # x-axis values
+                            y=y,  # y-axis values
+                            showlegend=False,  # Hide legend
+                            mode="lines",  # Only show lines
+                            name="Quadratic Line",  # Legend name
+                            line=dict(color=design_ranges[design_num][1], width=2),  # Customize line style
+                        )
+                    )
+        ''''
+        # Add a line trace to the figure
+        fig.add_trace(
+            go.Scatter(
+                x=x_winter,  # x-axis values
+                y=y_winter,  # y-axis values
+                showlegend=False,  # Hide legend
+                mode="lines",  # Only show lines
+                name="Quadratic Line",  # Legend name
+                line=dict(color="blue", width=2),  # Customize line style
+            )
+        )
+
+        fig.add_trace(
+            go.Scatter(
+                x=x_summer,  # x-axis values
+                y=y_summer,  # y-axis values
+                showlegend=False,  # Hide legend
+                mode="lines",  # Only show lines
+                name="Quadratic Line",  # Legend name
+                line=dict(color="red", width=2),  # Customize line style
+            )
+        )
+        '''
         # fig.add_trace(
         #     go.Scatter(
         #         x=dbt_list,
